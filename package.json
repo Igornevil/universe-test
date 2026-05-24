@@ -1,0 +1,46 @@
+{
+  "name": "universe-test",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Products + Notifications microservices with Next.js frontend",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "infra:up": "docker compose -f docker-compose.infra.yml up -d",
+    "infra:down": "docker compose -f docker-compose.infra.yml down",
+    "infra:logs": "docker compose -f docker-compose.infra.yml logs -f",
+    "stack:up": "docker compose up -d --build",
+    "stack:down": "docker compose down",
+    "stack:logs": "docker compose logs -f",
+    "db:migrate": "pnpm db:migrate:products && pnpm db:migrate:notifications",
+    "db:migrate:products": "pnpm --filter @universe/products db:migrate",
+    "db:migrate:notifications": "pnpm --filter @universe/notifications db:migrate",
+    "db:generate:products": "pnpm --filter @universe/products db:generate",
+    "db:generate:notifications": "pnpm --filter @universe/notifications db:generate",
+    "db:seed:products": "pnpm --filter @universe/products db:seed"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@swc/core",
+      "esbuild"
+    ]
+  }
+}

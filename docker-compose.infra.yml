@@ -1,0 +1,74 @@
+# Infrastructure-only compose: Postgres x2 + RabbitMQ.
+# Use when running app services locally via `pnpm dev`.
+# Usage: pnpm infra:up
+
+services:
+  postgres-products:
+    image: postgres:16-alpine
+    container_name: universe-postgres-products
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_PRODUCTS_USER:-products}
+      POSTGRES_PASSWORD: ${POSTGRES_PRODUCTS_PASSWORD:-products_pass}
+      POSTGRES_DB: ${POSTGRES_PRODUCTS_DB:-products}
+    ports:
+      - '${POSTGRES_PRODUCTS_PORT:-5432}:5432'
+    volumes:
+      - postgres_products_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_PRODUCTS_USER:-products} -d ${POSTGRES_PRODUCTS_DB:-products}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres-notifications:
+    image: postgres:16-alpine
+    container_name: universe-postgres-notifications
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_NOTIFICATIONS_USER:-notifications}
+      POSTGRES_PASSWORD: ${POSTGRES_NOTIFICATIONS_PASSWORD:-notifications_pass}
+      POSTGRES_DB: ${POSTGRES_NOTIFICATIONS_DB:-notifications}
+    ports:
+      - '${POSTGRES_NOTIFICATIONS_PORT:-5433}:5432'
+    volumes:
+      - postgres_notifications_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_NOTIFICATIONS_USER:-notifications} -d ${POSTGRES_NOTIFICATIONS_DB:-notifications}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: universe-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - '${RABBITMQ_PORT:-5672}:5672'
+      - '${RABBITMQ_MANAGEMENT_PORT:-15672}:15672'
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  postgres_products_data:
+  postgres_notifications_data:
+  rabbitmq_data:

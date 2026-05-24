@@ -1,0 +1,149 @@
+# Full stack: Postgres x2 + RabbitMQ + Products + Notifications + Web.
+# Usage: docker compose up --build
+
+services:
+  postgres-products:
+    image: postgres:16-alpine
+    container_name: universe-postgres-products
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_PRODUCTS_USER:-products}
+      POSTGRES_PASSWORD: ${POSTGRES_PRODUCTS_PASSWORD:-products_pass}
+      POSTGRES_DB: ${POSTGRES_PRODUCTS_DB:-products}
+    ports:
+      - '${POSTGRES_PRODUCTS_PORT:-5432}:5432'
+    volumes:
+      - postgres_products_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_PRODUCTS_USER:-products} -d ${POSTGRES_PRODUCTS_DB:-products}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres-notifications:
+    image: postgres:16-alpine
+    container_name: universe-postgres-notifications
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_NOTIFICATIONS_USER:-notifications}
+      POSTGRES_PASSWORD: ${POSTGRES_NOTIFICATIONS_PASSWORD:-notifications_pass}
+      POSTGRES_DB: ${POSTGRES_NOTIFICATIONS_DB:-notifications}
+    ports:
+      - '${POSTGRES_NOTIFICATIONS_PORT:-5433}:5432'
+    volumes:
+      - postgres_notifications_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_NOTIFICATIONS_USER:-notifications} -d ${POSTGRES_NOTIFICATIONS_DB:-notifications}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: universe-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - '${RABBITMQ_PORT:-5672}:5672'
+      - '${RABBITMQ_MANAGEMENT_PORT:-15672}:15672'
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  products:
+    build:
+      context: .
+      dockerfile: apps/products/Dockerfile
+    container_name: universe-products
+    restart: unless-stopped
+    depends_on:
+      postgres-products:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PRODUCTS_PORT: 3001
+      PRODUCTS_DATABASE_URL: postgresql://${POSTGRES_PRODUCTS_USER:-products}:${POSTGRES_PRODUCTS_PASSWORD:-products_pass}@postgres-products:5432/${POSTGRES_PRODUCTS_DB:-products}
+      PRODUCTS_RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
+      PRODUCTS_LOG_LEVEL: ${PRODUCTS_LOG_LEVEL:-info}
+    ports:
+      - '${PRODUCTS_PORT:-3001}:3001'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://localhost:3001/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  notifications:
+    build:
+      context: .
+      dockerfile: apps/notifications/Dockerfile
+    container_name: universe-notifications
+    restart: unless-stopped
+    depends_on:
+      postgres-notifications:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NOTIFICATIONS_HEALTH_PORT: 3002
+      NOTIFICATIONS_DATABASE_URL: postgresql://${POSTGRES_NOTIFICATIONS_USER:-notifications}:${POSTGRES_NOTIFICATIONS_PASSWORD:-notifications_pass}@postgres-notifications:5432/${POSTGRES_NOTIFICATIONS_DB:-notifications}
+      NOTIFICATIONS_RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
+      NOTIFICATIONS_LOG_LEVEL: ${NOTIFICATIONS_LOG_LEVEL:-info}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://localhost:3002/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_PRODUCTS_API_URL: ${NEXT_PUBLIC_PRODUCTS_API_URL:-http://localhost:3001}
+    container_name: universe-web
+    restart: unless-stopped
+    depends_on:
+      products:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+
+volumes:
+  postgres_products_data:
+  postgres_notifications_data:
+  rabbitmq_data:

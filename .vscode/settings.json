@@ -1,0 +1,11 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "eslint.workingDirectories": [
+    "apps/products",
+    "apps/notifications",
+    "apps/web",
+    "packages/contracts"
+  ],
+  "js/ts.tsdk.path": "node_modules/typescript/lib"
+}

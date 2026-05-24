@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "./dist",
+    "types": ["node", "reflect-metadata"],
+
+    // moduleResolution=Node is the only non-deprecated value that allows
+    // CommonJS output without `.js` extensions on relative imports. TS 5+
+    // marks the alias as deprecated; the dedicated opt-in below silences
+    // the IDE warning until TS 7 lands and we migrate to NodeNext.
+    "ignoreDeprecations": "5.0"
+  },
+  "include": [
+    "src/**/*",
+    "test/**/*",
+    "drizzle.config.ts",
+    "vitest.config.ts",
+    "vitest.config.e2e.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
