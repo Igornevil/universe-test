@@ -65,8 +65,8 @@ export function ProductsPage() {
             </div>
           </div>
           <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
-            Browse, create and delete products. Each change emits an event to the
-            Notifications service for audit.
+            Browse, create and delete products. Each change emits an event to the Notifications
+            service for audit.
           </p>
         </div>
         <CreateProductDialog />

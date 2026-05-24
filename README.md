@@ -3,9 +3,9 @@
 Production-style microservices test task: **Products** + **Notifications** + **Web**.
 
 A small but architecturally complete system: a NestJS REST service that publishes
-domain events through RabbitMQ to a second NestJS worker, both backed by their own
-PostgreSQL databases, fronted by a Next.js UI. The whole stack runs with a single
-`docker compose up`.
+domain events through RabbitMQ to a second NestJS worker, both backed by their
+own PostgreSQL databases, fronted by a Next.js UI. The whole stack runs with a
+single `docker compose up`.
 
 ## Stack
 
@@ -52,19 +52,54 @@ PostgreSQL databases, fronted by a Next.js UI. The whole stack runs with a singl
                 └─────────────────┘                      └──────────────────┘
 ```
 
-Each NestJS service follows a layered (DDD-flavoured) layout:
+### Backend layout — Feature-Sliced Modular Monolith
+
+Each NestJS service is split into **two top-level concerns**:
 
 ```
 src/
-├── domain/          # Entities, Value Objects, Repository interfaces, domain errors
-├── application/     # Use cases, outbound ports (EventPublisher, …)
-├── infrastructure/  # Drizzle repositories, RabbitMQ publisher/consumer
-└── presentation/    # REST controllers, DTOs, exception filters (Products only)
+├── shared/      # generic infra: DB client, AMQP connection, config, pipes, health
+└── modules/     # one folder per feature, each fully self-contained
+    └── <feature>/
+        ├── domain/          # entities, value objects, repository interfaces, errors
+        ├── application/     # use cases, outbound ports (EventPublisher, …)
+        ├── infrastructure/  # Drizzle repository impl, RMQ publisher/consumer, schema, migrations
+        ├── api/             # NestJS controllers, HTTP exception filter (Products only)
+        └── <feature>.module.ts  # NestJS module wiring everything together
 ```
 
-The shared `@universe/contracts` package owns the wire format: Zod schemas for
-API DTOs and broker event payloads, plus exchange/queue/routing-key constants
-that both producer and consumer import.
+Inside a module the dependencies are one-way: `api → application → domain ← infrastructure`.
+Domain has no framework imports — pure TypeScript. Infrastructure implements the
+interfaces declared in domain/application.
+
+Generic primitives (postgres client, AMQP connection, config, Zod-pipe, health
+controller) live in `shared/`. They don't know about products or notifications —
+feature modules consume them via tokens (`DATABASE_CLIENT`, `AmqpConnection`).
+Adding a new feature is a mechanical copy of `modules/<feature>/`.
+
+### Frontend layout — Feature-Sliced Design (FSD)
+
+The web app uses the standard FSD layer hierarchy, adapted to Next.js App Router:
+
+```
+src/
+├── app/         # Next.js App Router (routing, providers, layout)
+├── views/       # page compositions (FSD "pages" layer, renamed to avoid Next.js Pages Router clash)
+├── widgets/     # composite UI blocks (e.g. ProductsTable)
+├── features/    # user actions (create-product, delete-product)
+├── entities/    # business entities (product: api, model, hooks)
+└── shared/      # ui primitives (shadcn), lib helpers, base http client, config
+```
+
+Strict downward dependency rule: `app → views → widgets → features → entities → shared`.
+Each slice exports through an `index.ts` barrel — internal files are private.
+
+### Shared contracts
+
+The `packages/contracts` package owns the wire format: Zod schemas for API DTOs
+and broker event payloads, plus exchange/queue/routing-key constants imported
+by both backend services and the frontend. Single source of truth — change a
+field name, TypeScript breaks everywhere it's used.
 
 ## Repository layout
 
@@ -77,8 +112,7 @@ universe-test/
 ├── packages/
 │   └── contracts/       # Shared Zod schemas (events + API DTOs)
 ├── docker-compose.yml         # Full stack (apps + infra)
-├── docker-compose.infra.yml   # Infra only (Postgres + RabbitMQ)
-└── plan/                      # Design notes (dated planning docs)
+└── docker-compose.infra.yml   # Infra only (Postgres + RabbitMQ)
 ```
 
 ## Prerequisites
@@ -115,17 +149,31 @@ docker exec universe-postgres-notifications \
   -c "SELECT event_name, payload FROM notifications ORDER BY received_at DESC LIMIT 10;"
 ```
 
+### Seeding sample products
+
+Want a populated catalogue to exercise pagination?
+
+```bash
+pnpm db:seed:products
+```
+
+Inserts ~60 realistic products with spread `createdAt` so the "newest first"
+ordering is meaningful. Run multiple times to add more rows.
+
 ## Local development (apps on host, infra in Docker)
 
 ```bash
 cp .env.example .env
 pnpm install
-pnpm infra:up                  # Postgres + RabbitMQ in Docker
-pnpm --filter @universe/contracts build
+pnpm infra:up        # Postgres + RabbitMQ in Docker
+pnpm db:migrate      # apply migrations for both services
+```
 
-# In separate terminals:
-pnpm --filter @universe/products db:migrate && pnpm --filter @universe/products dev
-pnpm --filter @universe/notifications db:migrate && pnpm --filter @universe/notifications dev
+Then in separate terminals:
+
+```bash
+pnpm --filter @universe/products dev
+pnpm --filter @universe/notifications dev
 pnpm --filter @universe/web dev
 ```
 
@@ -179,10 +227,10 @@ Every event uses a small envelope:
 }
 ```
 
-The notifications service uses `eventId` as an idempotency key (unique constraint
-in `notifications.event_id`) — duplicate deliveries become no-ops.
+The notifications service uses `eventId` as an idempotency key (unique
+constraint on `notifications.event_id`) — duplicate deliveries become no-ops.
 
-Consumer behaviour:
+Consumer ack policy:
 
 - Schema-invalid message → `nack` without requeue → routed to DLQ via DLX
 - Transient handler error → `nack` with requeue (retry on the same queue)
@@ -196,33 +244,40 @@ pnpm test                                     # unit tests (Vitest)
 pnpm --filter @universe/products test:e2e     # e2e against real Postgres
 ```
 
-- **Unit tests** cover the Products domain (Value Objects, Entity invariants),
-  use cases (with in-memory repository + recording publisher), and the
-  Notifications handler.
-- **e2e tests** boot the full NestJS application via `@nestjs/testing`, run real
-  Drizzle migrations against the live `products_db`, hit the HTTP API with
-  Supertest, and verify both DB state and emitted events. The `AmqpConnection`
-  and `EventPublisher` are stubbed so the tests do not require RabbitMQ to be
-  running.
+- **Unit tests** cover the Products domain (Money value object, Product entity
+  invariants, UUID validation), all three use cases (with an in-memory
+  repository + recording publisher), and the Notifications handler.
+- **e2e tests** boot the full NestJS application via `@nestjs/testing`, run
+  real Drizzle migrations against the live `products_db`, hit the HTTP API
+  with Supertest, and verify both DB state and emitted events. The
+  `AmqpConnection` and `EventPublisher` are stubbed so e2e tests do not
+  require RabbitMQ to be running.
 
 To run e2e locally: `pnpm infra:up && pnpm --filter @universe/products test:e2e`.
 
 ## Useful commands
 
-| Command             | Purpose                                           |
-| ------------------- | ------------------------------------------------- |
-| `pnpm install`      | Install all workspace deps                        |
-| `pnpm infra:up`     | Start Postgres + RabbitMQ in Docker               |
-| `pnpm infra:down`   | Stop infrastructure                               |
-| `pnpm infra:logs`   | Tail infrastructure logs                          |
-| `pnpm stack:up`     | Build + start everything (apps + infra) in Docker |
-| `pnpm stack:down`   | Stop the full stack                               |
-| `pnpm stack:logs`   | Tail logs across the full stack                   |
-| `pnpm build`        | Build all packages (turbo, respects deps)         |
-| `pnpm test`         | Run unit tests across all packages                |
-| `pnpm typecheck`    | Type-check all packages                           |
-| `pnpm format`       | Format with Prettier                              |
-| `pnpm format:check` | Verify formatting without writing                 |
+| Command                          | Purpose                                           |
+| -------------------------------- | ------------------------------------------------- |
+| `pnpm install`                   | Install all workspace deps                        |
+| `pnpm infra:up`                  | Start Postgres + RabbitMQ in Docker               |
+| `pnpm infra:down`                | Stop infrastructure                               |
+| `pnpm infra:logs`                | Tail infrastructure logs                          |
+| `pnpm stack:up`                  | Build + start everything (apps + infra) in Docker |
+| `pnpm stack:down`                | Stop the full stack                               |
+| `pnpm stack:logs`                | Tail logs across the full stack                   |
+| `pnpm db:migrate`                | Apply migrations to both services                 |
+| `pnpm db:migrate:products`       | Migrations only for Products                      |
+| `pnpm db:migrate:notifications`  | Migrations only for Notifications                 |
+| `pnpm db:seed:products`          | Seed ~60 sample products                          |
+| `pnpm db:generate:products`      | Generate a new migration from `schema.ts` diff    |
+| `pnpm db:generate:notifications` | Same for Notifications                            |
+| `pnpm build`                     | Build all packages (turbo, respects deps)         |
+| `pnpm test`                      | Run unit tests across all packages                |
+| `pnpm typecheck`                 | Type-check all packages                           |
+| `pnpm lint`                      | ESLint across all packages                        |
+| `pnpm format`                    | Format with Prettier                              |
+| `pnpm format:check`              | Verify formatting without writing                 |
 
 ## Configuration
 
@@ -239,32 +294,36 @@ error message and aborts the boot.
 
 ## Design decisions and trade-offs
 
-The full reasoning is in [plan/2026-05-21 - Universe Test - Загальний план.md](plan/2026-05-21%20-%20Universe%20Test%20-%20%D0%97%D0%B0%D0%B3%D0%B0%D0%BB%D1%8C%D0%BD%D0%B8%D0%B9%20%D0%BF%D0%BB%D0%B0%D0%BD.md).
-Selected highlights:
-
 - **RabbitMQ over SQS.** The task allowed either, but the domain is a
   textbook pub/sub fanout (Products emits, multiple consumers can subscribe).
-  SQS is a queue, not a fanout primitive; the AWS-correct replacement would be
-  SNS + SQS, which is heavier than a single RabbitMQ container. RabbitMQ also
-  has first-class NestJS support and a built-in management UI for inspecting
-  queues during development.
-- **Separate database per service.** Each service owns its schema and migrations
-  — no shared tables, no cross-service joins.
-- **Money as integer cents.** The wire and the database both use `priceCents`,
-  avoiding any float arithmetic. Decimal display ("19.99") is purely a frontend
-  concern.
-- **Value Objects in the domain.** `Money` and `ProductId` are immutable
-  classes whose constructors enforce their invariants — any instance you receive
-  is guaranteed valid.
+  SQS is queue-only; the AWS-correct equivalent would be SNS + SQS, which is
+  heavier than a single RabbitMQ container. RabbitMQ also has first-class
+  NestJS support and a built-in management UI for inspecting queues during
+  development.
+- **Feature-Sliced Modular Monolith.** Top-level `shared/` for generic infra,
+  `modules/<feature>/` for self-contained features. Inside a module, classic
+  layered architecture (domain / application / infrastructure / api). Adding
+  a new resource means copying one folder. Reviewable, growable, splittable
+  into microservices later without touching shared.
+- **Separate database per service.** Each service owns its schema and
+  migrations — no shared tables, no cross-service joins.
+- **Money as integer cents.** The wire and the database both use
+  `priceCents`, avoiding any float arithmetic. Decimal display ("19.99") is
+  purely a frontend concern.
+- **`Money` value object.** Immutable class whose `fromCents` factory
+  enforces invariants (integer, non-negative, supported currency). Any `Money`
+  instance you receive is guaranteed valid. (The earlier `ProductId` value
+  object was dropped in favour of a plain `string` + `assertProductId` helper
+  — UUID validation lives in one place, no class indirection.)
 - **Outbound port for events.** Use cases depend on an `EventPublisher`
-  interface, not on RabbitMQ. The concrete implementation lives in
-  `infrastructure/messaging/`. This keeps the domain pure and makes the use
-  cases trivial to unit test.
-- **Publish after commit (not Transactional Outbox).** Conscious shortcut for
-  the two-day budget. The Products service writes to its DB, then publishes.
-  If the process crashes between the two, the event is lost. The fix on a
-  larger timeline is a transactional outbox table with a separate poller — see
-  the "Future improvements" section.
+  interface, not on RabbitMQ. The concrete `ProductEventsPublisher` lives in
+  `modules/products/infrastructure/` and declares the exchange on bootstrap.
+  This keeps domain pure and makes use cases trivial to unit-test.
+- **Publish after commit (not Transactional Outbox).** Conscious shortcut
+  for the two-day budget. Products writes to its DB, then publishes. If the
+  process crashes between commit and publish, the event is lost. The fix on
+  a larger timeline is a transactional outbox table with a separate poller
+  — see "Known limitations" below.
 
 ## Known limitations / future improvements
 
@@ -273,15 +332,17 @@ is a clear next step rather than a missing piece:
 
 - **Transactional Outbox** — guarantee that every committed write produces
   exactly one publish, even across crashes.
-- **Idempotent message production** — currently consumers handle duplicate
-  delivery; producers do not yet attach a stable idempotency key tied to a
-  business operation.
+- **Idempotent message production** — consumers handle duplicate delivery via
+  unique `eventId`; producers do not yet attach a stable idempotency key tied
+  to a business operation.
 - **Authentication / authorization** — not in scope for the task; the
   Products API is open.
 - **Observability** — structured logs are in place; metrics (Prometheus) and
   distributed tracing (OpenTelemetry) are not.
-- **Retry policy on publish failures** — relies on amqp-connection-manager's
+- **Retry policy on publish failures** — relies on `amqp-connection-manager`'s
   auto-reconnect; a richer policy (exponential backoff, circuit breaker) is a
   next step.
 - **Cursor-based pagination** — current pagination is offset/limit, fine for
   small catalogues but not for very large ones.
+- **CI pipeline** — a `.github/workflows/ci.yml` running `typecheck + lint +
+test` on every push/PR is the obvious first add.

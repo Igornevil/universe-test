@@ -102,7 +102,11 @@ export function CreateProductDialog() {
             <div className="space-y-1">
               <DialogTitle className="text-xl">New product</DialogTitle>
               <DialogDescription>
-                Add a product to the catalogue. A <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">product.created</code> event will be emitted to subscribers.
+                Add a product to the catalogue. A{' '}
+                <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
+                  product.created
+                </code>{' '}
+                event will be emitted to subscribers.
               </DialogDescription>
             </div>
           </DialogHeader>

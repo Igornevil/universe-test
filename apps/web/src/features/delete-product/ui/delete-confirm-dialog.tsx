@@ -81,12 +81,7 @@ export function DeleteConfirmDialog({ product, onClose }: DeleteConfirmDialogPro
         ) : null}
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={onClose}
-            disabled={mutation.isPending}
-          >
+          <Button type="button" variant="ghost" onClick={onClose} disabled={mutation.isPending}>
             Cancel
           </Button>
           <Button
